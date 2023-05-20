@@ -1,1 +1,502 @@
-{"metadata":{"kernelspec":{"language":"python","display_name":"Python 3","name":"python3"},"language_info":{"pygments_lexer":"ipython3","nbconvert_exporter":"python","version":"3.6.4","file_extension":".py","codemirror_mode":{"name":"ipython","version":3},"name":"python","mimetype":"text/x-python"}},"nbformat_minor":4,"nbformat":4,"cells":[{"cell_type":"code","source":"# %% [code]\n\"\"\"\nThis script is responsible for allocating custom function and classes to be used on a day to day work in python.\nThe applications can be to simple optimized data reading or a custom transformer put into a ML pipeline.\n\n--- SUMMARY ---\n\n1. Custom Functions\n2. Custom Pipelines Transformers\n    2.1 Pre Processing Pipelines\n    2.2 Processing Pipelines\n\n---------------------------------------------------------------\nWritten by Thiago Panini - Latest version: September 14th 2020\n---------------------------------------------------------------\n\"\"\"\n\n# Importing libraries\nimport pandas as pd\nimport numpy as np\nfrom sklearn.base import BaseEstimator, TransformerMixin\nfrom sklearn.model_selection import train_test_split\n\n\n\"\"\"\n-----------------------------------\n------- 1. CUSTOM FUNCTIONS -------\n-----------------------------------\n\"\"\"\n\n\ndef import_data(path, sep=',', optimized=True, n_lines=50, encoding='utf-8', usecols=None, verbose=True):\n    \"\"\"\n    This functions applies a csv reading in an optimized way, converting data types (float64 to float32 and\n    int 64 to int32), reducing script memory usage.\n\n    Parameters\n    ----------\n    :param path: path reference for importing the data [type: string]\n    :param sep: separator parameter for read_csv() method [type: string, default: ',']\n    :param optimized: boolean flag for reading data in an optimized way [type: bool, default: True]\n    :param n_lines: number of lines read during the data type optimization [type: int, default: 50]\n    :param encoding: encoding param for read_csv() method [type: string, default: 'utf-8']\n    :param verbose: the verbose arg allow communication between steps [type: bool, default: True]\n    :param usecols: columns to read - set None to read all the columns [type: list, default: None]\n\n    Return\n    ------\n    :return: df: file after the preparation steps [type: pd.DataFrame]\n\n    Application\n    -----------\n    # Reading the data and applying a data type conversion for optimizing the memory usage\n    df = import_data(filepath, optimized=True, n_lines=100)\n    \"\"\"\n\n    # Validating the optimized flag for optimizing memory usage\n    if optimized:\n        # Reading only the first rows of the data\n        df_raw = pd.read_csv(path, sep=sep, nrows=n_lines, encoding=encoding, usecols=usecols)\n        start_mem = df_raw.memory_usage().sum() / 1024 ** 2\n\n        # Columns were the optimization is applicable\n        float64_cols = [col for col, dtype in df_raw.dtypes.items() if dtype == 'float64']\n        int64_cols = [col for col, dtype in df_raw.dtypes.items() if dtype == 'int64']\n        total_opt = len(float64_cols) + len(int64_cols)\n        if verbose:\n            print(f'This dataset has {df_raw.shape[1]} columns, which {total_opt} is/are applicable to optimization.\\n')\n\n        # Optimizing data types: float64 to float32\n        for col in float64_cols:\n            df_raw[col] = df_raw[col].astype('float32')\n\n        # Optimizing data types: int64 to int32\n        for col in int64_cols:\n            df_raw[col] = df_raw[col].astype('int32')\n\n        # Looking at memory reduction\n        if verbose:\n            print('----------------------------------------------------')\n            print(f'Memory usage ({n_lines} lines): {start_mem:.4f} MB')\n            end_mem = df_raw.memory_usage().sum() / 1024 ** 2\n            print(f'Memory usage after optimization ({n_lines} lines): {end_mem:.4f} MB')\n            print('----------------------------------------------------')\n            mem_reduction = 100 * (1 - (end_mem / start_mem))\n            print(f'\\nReduction of {mem_reduction:.2f}% on memory usage\\n')\n\n        # Creating an object with new dtypes\n        dtypes = df_raw.dtypes\n        col_names = dtypes.index\n        types = [dtype.name for dtype in dtypes.values]\n        column_types = dict(zip(col_names, types))\n\n        # Trying to read the dataset with new types\n        try:\n            return pd.read_csv(path, sep=sep, dtype=column_types, encoding=encoding, usecols=usecols)\n        except ValueError as e1:\n            # Error cach during data reading with new data types\n            print(f'ValueError on data reading: {e1}')\n            print('The dataset will be read without optimization types.')\n            return pd.read_csv(path, sep=sep, encoding=encoding, usecols=usecols)\n    else:\n        # Reading the data without optimization\n        return pd.read_csv(path, sep=sep, encoding=encoding, usecols=usecols)\n\n\ndef split_cat_num_data(df):\n    \"\"\"\n    This functions receives a DataFrame object and extracts numerical and categorical features from it\n\n    Parameters\n    ----------\n    :param df: DataFrame object where feature split would be extracted [type: pd.DataFrame]\n\n    Return\n    ------\n    :return: num_attribs, cat_attribs: lists with numerical and categorical features [type: list]\n\n    Application\n    -----------\n    # Extracting numerical and categorical features for a given DataFrame\n    num_cols, cat_cols = split_cat_num_data(df)\n    \"\"\"\n\n    # Splitting data attributes by data type\n    num_attribs = [col for col, dtype in df.dtypes.items() if dtype != 'object']\n    cat_attribs = [col for col, dtype in df.dtypes.items() if dtype == 'object']\n\n    return num_attribs, cat_attribs\n\n\ndef calc_working_days(date_series1, date_series2, convert=True):\n    \"\"\"\n    This functions receives two date series as args and calculates the working days between each of its rows.\n\n    Parameters\n    ----------\n    :param date_series1: first date series to be used on working days calculation [type: pd.Series]\n    :param date_series2: second date series to subtract the first one [type: pd.Series]\n    :param convert: flag that guides the series conversions in datetime objects [type: bool, default: True]\n\n    Return\n    ------\n    :return: wd_list: list with working days calculations between two date series\n\n    Application\n    -----------\n    # Calculating the working days between two date series\n    working_days = calc_working_days(df['purchase_date'], df['delivered_date'], convert=True)\n    \"\"\"\n\n    # Auxiliar function for threating exceptions during the np.busday_count() function\n    def handle_working_day_calc(d1, d2):\n        try:\n            date_diff = np.busday_count(d1, d2)\n            return date_diff\n        except:\n            return np.NaN\n\n    # Applying conversion on series in datetime data\n    if convert:\n        date_series1 = pd.to_datetime(date_series1).values.astype('datetime64[D]')\n        date_series2 = pd.to_datetime(date_series2).values.astype('datetime64[D]')\n\n    # Building a list with working days calculations between the two dates\n    wd_list = [handle_working_day_calc(d1, d2) for d1, d2 in zip(date_series1, date_series2)]\n\n    return wd_list\n\n\ndef indices_of_top_k(arr, k):\n    \"\"\"\n    This function selects the top k entries in an array based on its indices\n\n    Parameters\n    ----------\n    :param arr: numpy array (in practice we will feed it with model feature importance array) [type: np.array]\n    :param k: top features integer definition [type: int]\n\n    Return\n    ------\n    :return: sorted array with filtered input array based on k entries\n\n    Application\n    -----------\n\n    \"\"\"\n    return np.sort(np.argpartition(np.array(arr), -k)[-k:])\n\n\n\"\"\"\n-----------------------------------\n----- 2. CUSTOM TRANSFORMERS ------\n   2.1 Pre Processing Pipelines\n-----------------------------------\n\"\"\"\n\n\nclass ColsFormatting(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class applies lower(), strip() and replace() method on a pandas DataFrame object.\n    It's not necessary to pass anything as args.\n\n    Return\n    ------\n    :return: df: pandas DataFrame after cols formatting [type: pd.DataFrame]\n\n    Application\n    -----------\n    cols_formatter = ColsFormatting()\n    df_custom = cols_formatter.fit_transform(df_old)\n    \"\"\"\n\n    def fit(self, df, y=None):\n        return self\n\n    def transform(self, df, y=None):\n        df.columns = [col.lower().strip().replace(' ', '_') for col in df.columns]\n        return df\n\n\nclass FeatureSelection(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class filters a dataset based on a set of features passed as argument.\n\n    Parameters\n    ----------\n    :param features: set of features to be selected on a DataFrame [type: list]\n\n    Return\n    ------\n    :return: df: pandas DataFrame after filtering attributes [type: pd.DataFrame]\n\n    Application\n    -----------\n    selector = FeatureSelection(features=model_features)\n    df_filtered = selector.fit_transform(df)\n    \"\"\"\n\n    def __init__(self, features):\n        self.features = features\n\n    def fit(self, df, y=None):\n        return self\n\n    def transform(self, df, y=None):\n        return df[self.features]\n\n\nclass TargetDefinition(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class transform a categorical target column into a numerical one base on a positive_class\n\n    Parameters\n    ----------\n    :param target_col: reference for the target column on the dataset [type: string]\n    :param pos_class: entry reference for positive class in the new target [type: string]\n    :param new_target_name: name of the new column created after the target mapping [type: string, default: 'target]\n\n    Return\n    ------\n    :return: df: pandas DataFrame after target mapping [pd.DataFrame]\n\n    Application\n    -----------\n    target_prep = TargetDefinition(target_col='class_target', pos_class='Some Category', new_target_name='target')\n    df = target_prep.fit_transform(df)\n    \"\"\"\n\n    def __init__(self, target_col, pos_class, new_target_name='target'):\n        self.target_col = target_col\n        self.pos_class = pos_class\n        self.new_target_name = new_target_name\n\n        # Sanity check: new_target_name may differ from target_col\n        if self.target_col == self.new_target_name:\n            print('[WARNING]')\n            print(f'New target column named {self.new_target_name} must differ from raw one named {self.target_col}')\n\n    def fit(self, df, y=None):\n        return self\n\n    def transform(self, df, y=None):\n        # Applying the new target rule based on positive class\n        df[self.new_target_name] = df[self.target_col].apply(lambda x: 1 if x == self.pos_class else 0)\n\n        # Dropping the old target column\n        return df.drop(self.target_col, axis=1)\n\n\nclass DropDuplicates(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class filters a dataset based on a set of features passed as argument.\n    It's not necessary to pass anything as args.\n\n    Return\n    ------\n    :return: df: pandas DataFrame dropping duplicates [type: pd.DataFrame]\n\n    Application\n    -----------\n    dup_dropper = DropDuplicates()\n    df_nodup = dup_dropper.fit_transform(df)\n    \"\"\"\n\n    def fit(self, df, y=None):\n        return self\n\n    def transform(self, df, y=None):\n        return df.drop_duplicates()\n\n\nclass SplitData(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class helps splitting data into training and testing and it can be used at the end of a pre_processing pipe.\n    In practice, the class applies the train_test_split() function from sklearn.model_selection module.\n\n    Parameters\n    ----------\n    :param target: reference of the target feature on the dataset [type: string]\n    :param test_size: test_size param of train_test_split() function [type: float, default: .20]\n    :param random_state: random_state param of train_test_split() function [type: int, default: 42]\n\n    X_: attribute associated with the features dataset before splitting [1]\n    y_: attribute associated with the target array before splitting [1]\n        [1] The X_ and y_ attributes are initialized right before splitting and can be retrieved later in the script.\n\n    Return\n    ------\n    :return: X_train: DataFrame for training data [type: pd.DataFrame]\n             X_test: DataFrame for testing data [type: pd.DataFrame]\n             y_train: array for training target data [type: np.array]\n             y_test: array for testing target data [type: np.array]\n\n    Application\n    -----------\n    splitter = SplitData(target='target')\n    X_train, X_test, y_train, y_test = splitter.fit_transform(df)\n    \"\"\"\n\n    def __init__(self, target, test_size=.20, random_state=42):\n        self.target = target\n        self.test_size = test_size\n        self.random_state = random_state\n\n    def fit(self, df, y=None):\n        return self\n\n    def transform(self, df, y=None):\n        # Returning X and y attributes (those can be retrieved in the future)\n        self.X_ = df.drop(self.target, axis=1)\n        self.y_ = df[self.target].values\n\n        return train_test_split(self.X_, self.y_, test_size=self.test_size, random_state=self.random_state)\n\n\n\"\"\"\n-----------------------------------\n----- 2. CUSTOM TRANSFORMERS ------\n    2.2 Preparation Pipelines\n-----------------------------------\n\"\"\"\n\n\nclass DummiesEncoding(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class applies the encoding on categorical data using pandas get_dummies() method. It also retrieves the\n    features after the encoding so it can be used further on the script\n\n    Parameters\n    ----------\n    :param dummy_na: flag that guides the encoding of NaN values on categorical features [type: bool, default: True]\n\n    Return\n    ------\n    :return: X_dum: Dataframe object (with categorical features) after encoding [type: pd.DataFrame]\n\n    Application\n    -----------\n    encoder = DummiesEncoding(dummy_na=True)\n    X_encoded = encoder.fit_transform(df[cat_features])\n    \"\"\"\n\n    def __init__(self, dummy_na=True):\n        self.dummy_na = dummy_na\n\n    def fit(self, X, y=None):\n        return self\n\n    def transform(self, X, y=None):\n\n        # Saving features into class attribute\n        self.cat_features_ori = list(X.columns)\n\n        # Applying encoding with pandas get_dummies()\n        X_cat_dum = pd.get_dummies(X, dummy_na=self.dummy_na)\n\n        # Joining datasets and dropping original columns before encoding\n        X_dum = X.join(X_cat_dum)\n        X_dum = X_dum.drop(self.cat_features_ori, axis=1)\n\n        # Retrieving features after encoding\n        self.features_after_encoding = list(X_dum.columns)\n\n        return X_dum\n\n\nclass FillNullData(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class fills null data. It's possible to select just some attributes to be filled with different values\n\n    Parameters\n    ----------\n    :param cols_to_fill: columns to be filled. Leave None if all the columns will be filled [type: list, default: None]\n    :param value_fill: value to be filled on the columns [type: int, default: 0]\n\n    Return\n    ------\n    :return: X: DataFrame object with NaN data filled [type: pd.DataFrame]\n\n    Application\n    -----------\n    filler = FillNullData(cols_to_fill=['colA', 'colB', 'colC'], value_fill=-999)\n    X_filled = filler.fit_transform(X)\n    \"\"\"\n\n    def __init__(self, cols_to_fill=None, value_fill=0):\n        self.cols_to_fill = cols_to_fill\n        self.value_fill = value_fill\n\n    def fit(self, X, y=None):\n        return self\n\n    def transform(self, X, y=None):\n        # Filling null data according to passed args\n        if self.cols_to_fill is not None:\n            X[self.cols_to_fill] = X[self.cols_to_fill].fillna(value=self.value_fill)\n            return X\n        else:\n            return X.fillna(value=self.value_fill)\n\n\nclass DropNullData(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class drops null data. It's possible to select just some attributes to be filled with different values\n\n    Parameters\n    ----------\n    :param cols_dropna: columns to be filled. Leave None if all the columns will be filled [type: list, default: None]\n\n    Return\n    ------\n    :return: X: DataFrame object with NaN data filled [type: pd.DataFrame]\n\n    Application\n    -----------\n    null_dropper = DropNulldata(cols_to_fill=['colA', 'colB', 'colC'], value_fill=-999)\n    X = null_dropper.fit_transform(X)\n    \"\"\"\n\n    def __init__(self, cols_dropna=None):\n        self.cols_dropna = cols_dropna\n\n    def fit(self, X, y=None):\n        return self\n\n    def transform(self, X, y=None):\n        # Filling null data according to passed args\n        if self.cols_dropna is not None:\n            X[self.cols_dropna] = X[self.cols_dropna].dropna()\n            return X\n        else:\n            return X.dropna()\n\n\nclass TopFeatureSelector(BaseEstimator, TransformerMixin):\n    \"\"\"\n    This class selects the top k most important features from a trained model\n\n    Parameters\n    ----------\n    :param feature_importance: array with feature importance given by a trained model [np.array]\n    :param k: integer that defines the top features to be filtered from the array [type: int]\n\n    Return\n    ------\n    :return: pandas DataFrame object filtered by the k important features [pd.DataFrame]\n\n    Application\n    -----------\n    feature_selector = TopFeatureSelector(feature_importance, k=10)\n    X_selected = feature_selector.fit_transform(X)\n    \"\"\"\n\n    def __init__(self, feature_importance, k):\n        self.feature_importance = feature_importance\n        self.k = k\n\n    def fit(self, X, y=None):\n        return self\n\n    def transform(self, X, y=None):\n        return X[:, indices_of_top_k(self.feature_importance, self.k)]\n","metadata":{"_uuid":"da5e7e4e-1695-4562-ad7d-499c9ec216f9","_cell_guid":"75de1bf3-c2db-43b0-aa25-74f7741a39fd","collapsed":false,"jupyter":{"outputs_hidden":false},"trusted":true},"execution_count":null,"outputs":[]}]}
+"""
+This script is responsible for allocating custom function and classes to be used on a day to day work in python.
+The applications can be to simple optimized data reading or a custom transformer put into a ML pipeline.
+
+--- SUMMARY ---
+
+1. Custom Functions
+2. Custom Pipelines Transformers
+    2.1 Pre Processing Pipelines
+    2.2 Processing Pipelines
+
+---------------------------------------------------------------
+Written by Thiago Panini - Latest version: September 14th 2020
+---------------------------------------------------------------
+"""
+
+# Importing libraries
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.model_selection import train_test_split
+
+
+"""
+-----------------------------------
+------- 1. CUSTOM FUNCTIONS -------
+-----------------------------------
+"""
+
+
+def import_data(path, sep=',', optimized=True, n_lines=50, encoding='utf-8', usecols=None, verbose=True):
+    """
+    This functions applies a csv reading in an optimized way, converting data types (float64 to float32 and
+    int 64 to int32), reducing script memory usage.
+
+    Parameters
+    ----------
+    :param path: path reference for importing the data [type: string]
+    :param sep: separator parameter for read_csv() method [type: string, default: ',']
+    :param optimized: boolean flag for reading data in an optimized way [type: bool, default: True]
+    :param n_lines: number of lines read during the data type optimization [type: int, default: 50]
+    :param encoding: encoding param for read_csv() method [type: string, default: 'utf-8']
+    :param verbose: the verbose arg allow communication between steps [type: bool, default: True]
+    :param usecols: columns to read - set None to read all the columns [type: list, default: None]
+
+    Return
+    ------
+    :return: df: file after the preparation steps [type: pd.DataFrame]
+
+    Application
+    -----------
+    # Reading the data and applying a data type conversion for optimizing the memory usage
+    df = import_data(filepath, optimized=True, n_lines=100)
+    """
+
+    # Validating the optimized flag for optimizing memory usage
+    if optimized:
+        # Reading only the first rows of the data
+        df_raw = pd.read_csv(path, sep=sep, nrows=n_lines, encoding=encoding, usecols=usecols)
+        start_mem = df_raw.memory_usage().sum() / 1024 ** 2
+
+        # Columns were the optimization is applicable
+        float64_cols = [col for col, dtype in df_raw.dtypes.items() if dtype == 'float64']
+        int64_cols = [col for col, dtype in df_raw.dtypes.items() if dtype == 'int64']
+        total_opt = len(float64_cols) + len(int64_cols)
+        if verbose:
+            print(f'This dataset has {df_raw.shape[1]} columns, which {total_opt} is/are applicable to optimization.\n')
+
+        # Optimizing data types: float64 to float32
+        for col in float64_cols:
+            df_raw[col] = df_raw[col].astype('float32')
+
+        # Optimizing data types: int64 to int32
+        for col in int64_cols:
+            df_raw[col] = df_raw[col].astype('int32')
+
+        # Looking at memory reduction
+        if verbose:
+            print('----------------------------------------------------')
+            print(f'Memory usage ({n_lines} lines): {start_mem:.4f} MB')
+            end_mem = df_raw.memory_usage().sum() / 1024 ** 2
+            print(f'Memory usage after optimization ({n_lines} lines): {end_mem:.4f} MB')
+            print('----------------------------------------------------')
+            mem_reduction = 100 * (1 - (end_mem / start_mem))
+            print(f'\nReduction of {mem_reduction:.2f}% on memory usage\n')
+
+        # Creating an object with new dtypes
+        dtypes = df_raw.dtypes
+        col_names = dtypes.index
+        types = [dtype.name for dtype in dtypes.values]
+        column_types = dict(zip(col_names, types))
+
+        # Trying to read the dataset with new types
+        try:
+            return pd.read_csv(path, sep=sep, dtype=column_types, encoding=encoding, usecols=usecols)
+        except ValueError as e1:
+            # Error cach during data reading with new data types
+            print(f'ValueError on data reading: {e1}')
+            print('The dataset will be read without optimization types.')
+            return pd.read_csv(path, sep=sep, encoding=encoding, usecols=usecols)
+    else:
+        # Reading the data without optimization
+        return pd.read_csv(path, sep=sep, encoding=encoding, usecols=usecols)
+
+
+def split_cat_num_data(df):
+    """
+    This functions receives a DataFrame object and extracts numerical and categorical features from it
+
+    Parameters
+    ----------
+    :param df: DataFrame object where feature split would be extracted [type: pd.DataFrame]
+
+    Return
+    ------
+    :return: num_attribs, cat_attribs: lists with numerical and categorical features [type: list]
+
+    Application
+    -----------
+    # Extracting numerical and categorical features for a given DataFrame
+    num_cols, cat_cols = split_cat_num_data(df)
+    """
+
+    # Splitting data attributes by data type
+    num_attribs = [col for col, dtype in df.dtypes.items() if dtype != 'object']
+    cat_attribs = [col for col, dtype in df.dtypes.items() if dtype == 'object']
+
+    return num_attribs, cat_attribs
+
+
+def calc_working_days(date_series1, date_series2, convert=True):
+    """
+    This functions receives two date series as args and calculates the working days between each of its rows.
+
+    Parameters
+    ----------
+    :param date_series1: first date series to be used on working days calculation [type: pd.Series]
+    :param date_series2: second date series to subtract the first one [type: pd.Series]
+    :param convert: flag that guides the series conversions in datetime objects [type: bool, default: True]
+
+    Return
+    ------
+    :return: wd_list: list with working days calculations between two date series
+
+    Application
+    -----------
+    # Calculating the working days between two date series
+    working_days = calc_working_days(df['purchase_date'], df['delivered_date'], convert=True)
+    """
+
+    # Auxiliar function for threating exceptions during the np.busday_count() function
+    def handle_working_day_calc(d1, d2):
+        try:
+            date_diff = np.busday_count(d1, d2)
+            return date_diff
+        except:
+            return np.NaN
+
+    # Applying conversion on series in datetime data
+    if convert:
+        date_series1 = pd.to_datetime(date_series1).values.astype('datetime64[D]')
+        date_series2 = pd.to_datetime(date_series2).values.astype('datetime64[D]')
+
+    # Building a list with working days calculations between the two dates
+    wd_list = [handle_working_day_calc(d1, d2) for d1, d2 in zip(date_series1, date_series2)]
+
+    return wd_list
+
+
+def indices_of_top_k(arr, k):
+    """
+    This function selects the top k entries in an array based on its indices
+
+    Parameters
+    ----------
+    :param arr: numpy array (in practice we will feed it with model feature importance array) [type: np.array]
+    :param k: top features integer definition [type: int]
+
+    Return
+    ------
+    :return: sorted array with filtered input array based on k entries
+
+    Application
+    -----------
+
+    """
+    return np.sort(np.argpartition(np.array(arr), -k)[-k:])
+
+
+"""
+-----------------------------------
+----- 2. CUSTOM TRANSFORMERS ------
+   2.1 Pre Processing Pipelines
+-----------------------------------
+"""
+
+
+class ColsFormatting(BaseEstimator, TransformerMixin):
+    """
+    This class applies lower(), strip() and replace() method on a pandas DataFrame object.
+    It's not necessary to pass anything as args.
+
+    Return
+    ------
+    :return: df: pandas DataFrame after cols formatting [type: pd.DataFrame]
+
+    Application
+    -----------
+    cols_formatter = ColsFormatting()
+    df_custom = cols_formatter.fit_transform(df_old)
+    """
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df, y=None):
+        df.columns = [col.lower().strip().replace(' ', '_') for col in df.columns]
+        return df
+
+
+class FeatureSelection(BaseEstimator, TransformerMixin):
+    """
+    This class filters a dataset based on a set of features passed as argument.
+
+    Parameters
+    ----------
+    :param features: set of features to be selected on a DataFrame [type: list]
+
+    Return
+    ------
+    :return: df: pandas DataFrame after filtering attributes [type: pd.DataFrame]
+
+    Application
+    -----------
+    selector = FeatureSelection(features=model_features)
+    df_filtered = selector.fit_transform(df)
+    """
+
+    def __init__(self, features):
+        self.features = features
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df, y=None):
+        return df[self.features]
+
+
+class TargetDefinition(BaseEstimator, TransformerMixin):
+    """
+    This class transform a categorical target column into a numerical one base on a positive_class
+
+    Parameters
+    ----------
+    :param target_col: reference for the target column on the dataset [type: string]
+    :param pos_class: entry reference for positive class in the new target [type: string]
+    :param new_target_name: name of the new column created after the target mapping [type: string, default: 'target]
+
+    Return
+    ------
+    :return: df: pandas DataFrame after target mapping [pd.DataFrame]
+
+    Application
+    -----------
+    target_prep = TargetDefinition(target_col='class_target', pos_class='Some Category', new_target_name='target')
+    df = target_prep.fit_transform(df)
+    """
+
+    def __init__(self, target_col, pos_class, new_target_name='target'):
+        self.target_col = target_col
+        self.pos_class = pos_class
+        self.new_target_name = new_target_name
+
+        # Sanity check: new_target_name may differ from target_col
+        if self.target_col == self.new_target_name:
+            print('[WARNING]')
+            print(f'New target column named {self.new_target_name} must differ from raw one named {self.target_col}')
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df, y=None):
+        # Applying the new target rule based on positive class
+        df[self.new_target_name] = df[self.target_col].apply(lambda x: 1 if x == self.pos_class else 0)
+
+        # Dropping the old target column
+        return df.drop(self.target_col, axis=1)
+
+
+class DropDuplicates(BaseEstimator, TransformerMixin):
+    """
+    This class filters a dataset based on a set of features passed as argument.
+    It's not necessary to pass anything as args.
+
+    Return
+    ------
+    :return: df: pandas DataFrame dropping duplicates [type: pd.DataFrame]
+
+    Application
+    -----------
+    dup_dropper = DropDuplicates()
+    df_nodup = dup_dropper.fit_transform(df)
+    """
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df, y=None):
+        return df.drop_duplicates()
+
+
+class SplitData(BaseEstimator, TransformerMixin):
+    """
+    This class helps splitting data into training and testing and it can be used at the end of a pre_processing pipe.
+    In practice, the class applies the train_test_split() function from sklearn.model_selection module.
+
+    Parameters
+    ----------
+    :param target: reference of the target feature on the dataset [type: string]
+    :param test_size: test_size param of train_test_split() function [type: float, default: .20]
+    :param random_state: random_state param of train_test_split() function [type: int, default: 42]
+
+    X_: attribute associated with the features dataset before splitting [1]
+    y_: attribute associated with the target array before splitting [1]
+        [1] The X_ and y_ attributes are initialized right before splitting and can be retrieved later in the script.
+
+    Return
+    ------
+    :return: X_train: DataFrame for training data [type: pd.DataFrame]
+             X_test: DataFrame for testing data [type: pd.DataFrame]
+             y_train: array for training target data [type: np.array]
+             y_test: array for testing target data [type: np.array]
+
+    Application
+    -----------
+    splitter = SplitData(target='target')
+    X_train, X_test, y_train, y_test = splitter.fit_transform(df)
+    """
+
+    def __init__(self, target, test_size=.20, random_state=42):
+        self.target = target
+        self.test_size = test_size
+        self.random_state = random_state
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df, y=None):
+        # Returning X and y attributes (those can be retrieved in the future)
+        self.X_ = df.drop(self.target, axis=1)
+        self.y_ = df[self.target].values
+
+        return train_test_split(self.X_, self.y_, test_size=self.test_size, random_state=self.random_state)
+
+
+"""
+-----------------------------------
+----- 2. CUSTOM TRANSFORMERS ------
+    2.2 Preparation Pipelines
+-----------------------------------
+"""
+
+
+class DummiesEncoding(BaseEstimator, TransformerMixin):
+    """
+    This class applies the encoding on categorical data using pandas get_dummies() method. It also retrieves the
+    features after the encoding so it can be used further on the script
+
+    Parameters
+    ----------
+    :param dummy_na: flag that guides the encoding of NaN values on categorical features [type: bool, default: True]
+
+    Return
+    ------
+    :return: X_dum: Dataframe object (with categorical features) after encoding [type: pd.DataFrame]
+
+    Application
+    -----------
+    encoder = DummiesEncoding(dummy_na=True)
+    X_encoded = encoder.fit_transform(df[cat_features])
+    """
+
+    def __init__(self, dummy_na=True):
+        self.dummy_na = dummy_na
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+
+        # Saving features into class attribute
+        self.cat_features_ori = list(X.columns)
+
+        # Applying encoding with pandas get_dummies()
+        X_cat_dum = pd.get_dummies(X, dummy_na=self.dummy_na)
+
+        # Joining datasets and dropping original columns before encoding
+        X_dum = X.join(X_cat_dum)
+        X_dum = X_dum.drop(self.cat_features_ori, axis=1)
+
+        # Retrieving features after encoding
+        self.features_after_encoding = list(X_dum.columns)
+
+        return X_dum
+
+
+class FillNullData(BaseEstimator, TransformerMixin):
+    """
+    This class fills null data. It's possible to select just some attributes to be filled with different values
+
+    Parameters
+    ----------
+    :param cols_to_fill: columns to be filled. Leave None if all the columns will be filled [type: list, default: None]
+    :param value_fill: value to be filled on the columns [type: int, default: 0]
+
+    Return
+    ------
+    :return: X: DataFrame object with NaN data filled [type: pd.DataFrame]
+
+    Application
+    -----------
+    filler = FillNullData(cols_to_fill=['colA', 'colB', 'colC'], value_fill=-999)
+    X_filled = filler.fit_transform(X)
+    """
+
+    def __init__(self, cols_to_fill=None, value_fill=0):
+        self.cols_to_fill = cols_to_fill
+        self.value_fill = value_fill
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+        # Filling null data according to passed args
+        if self.cols_to_fill is not None:
+            X[self.cols_to_fill] = X[self.cols_to_fill].fillna(value=self.value_fill)
+            return X
+        else:
+            return X.fillna(value=self.value_fill)
+
+
+class DropNullData(BaseEstimator, TransformerMixin):
+    """
+    This class drops null data. It's possible to select just some attributes to be filled with different values
+
+    Parameters
+    ----------
+    :param cols_dropna: columns to be filled. Leave None if all the columns will be filled [type: list, default: None]
+
+    Return
+    ------
+    :return: X: DataFrame object with NaN data filled [type: pd.DataFrame]
+
+    Application
+    -----------
+    null_dropper = DropNulldata(cols_to_fill=['colA', 'colB', 'colC'], value_fill=-999)
+    X = null_dropper.fit_transform(X)
+    """
+
+    def __init__(self, cols_dropna=None):
+        self.cols_dropna = cols_dropna
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+        # Filling null data according to passed args
+        if self.cols_dropna is not None:
+            X[self.cols_dropna] = X[self.cols_dropna].dropna()
+            return X
+        else:
+            return X.dropna()
+
+
+class TopFeatureSelector(BaseEstimator, TransformerMixin):
+    """
+    This class selects the top k most important features from a trained model
+
+    Parameters
+    ----------
+    :param feature_importance: array with feature importance given by a trained model [np.array]
+    :param k: integer that defines the top features to be filtered from the array [type: int]
+
+    Return
+    ------
+    :return: pandas DataFrame object filtered by the k important features [pd.DataFrame]
+
+    Application
+    -----------
+    feature_selector = TopFeatureSelector(feature_importance, k=10)
+    X_selected = feature_selector.fit_transform(X)
+    """
+
+    def __init__(self, feature_importance, k):
+        self.feature_importance = feature_importance
+        self.k = k
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+        return X[:, indices_of_top_k(self.feature_importance, self.k)]
